@@ -1955,89 +1955,85 @@ def launch_dashboard():
             # Create new DataFrame for plotting
             plot_data = []
 
-            for index, row in df.iterrows():
-                # Check if the current row is not the last row
-                if index < len(df) - 1:
-                    next_row = df.iloc[index + 1]
-                else:
-                    next_row = None  # No next row if this is the last row
+            for product_name, product_group in df.groupby('Product Name'):
+                total_delay = timedelta(0)  # Initialize total delay for each product
+                last_end_time = None
 
-                # Add a small black line if SetupTimeCheck is 0
-                if row['Process Type'] == 'In House':
-                    # Ensure setup_start and Start Time are not NaT before formatting
-                    setup_start = row['Start Time'] - timedelta(minutes=30) if pd.notnull(row['Start Time']) else pd.NaT
-                    formatted_setup_start = setup_start.strftime('%d-%b %H:%M') if pd.notnull(setup_start) else ''
-                    formatted_start_time = row['Start Time'].strftime('%d-%b %H:%M') if pd.notnull(row['Start Time']) else ''
-                    formatted_end_time=row['Start Time'].strftime('%d-%b %H:%M') if pd.notnull(row['Start Time']) else ''
+                for index, row in product_group.iterrows():
+                    # Add a small black line if SetupTimeCheck is 0
+                    if row['Process Type'] == 'In House':
+                        setup_start = row['Start Time'] - timedelta(minutes=30) if pd.notnull(row['Start Time']) else pd.NaT
+                        plot_data.append({
+                            'Product Name': row['Product Name'],
+                            'Components': 'Setup Time',  # General label for setup time
+                            'Start Time': setup_start,
+                            'End Time': row['Start Time'],
+                            'Machine Number': '',  # Remove machine number for setup time
+                            'Is Setup': True
+                        })
+
+                    # Adjust end time based on the process type of the next row
+                    new_end = row['End Time'] - timedelta(minutes=30) if pd.notnull(row['End Time']) else pd.NaT
                     plot_data.append({
                         'Product Name': row['Product Name'],
-                        'Components': 'Setup Time',  # General label for setup time
-                        'Start Time': setup_start,
-                        'End Time': row['Start Time'],
+                        'Components': row['Components'],
+                        'Start Time': row['Start Time'],
+                        'End Time': new_end,
                         'Machine Number': row['Machine Number'],
-                        'Formatted Start Time': formatted_setup_start,
-                        'Formatted End Time': formatted_end_time,
-                        'Is Setup': True
+                        'Is Setup': False
                     })
-                    
-                if next_row is not None:
-                    # Access next_row's data like this:
-                    next_PT = next_row['Process Type']
-                    if next_PT == "Outsource":
-                        new_end = row['End Time']
-                    else:
-                        new_end = row['End Time'] - timedelta(minutes=30) if pd.notnull(row['End Time']) else pd.NaT  # Adjust as necessary
-                else:
-                    new_end = row['End Time'] - timedelta(minutes=30) if pd.notnull(row['End Time']) else pd.NaT  # Adjust as necessary
-                
-                # Ensure Start Time and End Time (or new_end) are not NaT before formatting
-                formatted_start_time = row['Start Time'].strftime('%d-%b %H:%M') if pd.notnull(row['Start Time']) else ''
-                formatted_end_time = new_end.strftime('%d-%b %H:%M') if pd.notnull(new_end) else ''
-                
-                plot_data.append({
-                    'Product Name': row['Product Name'],
-                    'Components': row['Components'],
-                    'Start Time': row['Start Time'],
-                    'End Time': new_end,
-                    'Machine Number': row['Machine Number'],
-                    'Formatted Start Time': formatted_start_time,
-                    'Formatted End Time': formatted_end_time,
-                    'Is Setup': False
-                })
+
+                    last_end_time = row['End Time']  # Update last end time
+                    # Accumulate delay times
+                    if pd.notnull(row['Delay Days']) and (row['Delay Days'] > 0 or row['Delay Hours'] > 0):
+                        total_delay += timedelta(days=row['Delay Days'], hours=row['Delay Hours'])
+
+                # Add a single delay block for the total delay at the end of the last component
+                if total_delay > timedelta(0):
+                    delay_start = last_end_time
+                    delay_end = delay_start + total_delay
+
+                    plot_data.append({
+                        'Product Name': product_name,
+                        'Components': 'Total Delay',  # Label for the total delay time
+                        'Start Time': delay_start,
+                        'End Time': delay_end,
+                        'Machine Number': '',  # No machine number for total delay
+                        'Is Setup': False
+                    })
 
             plot_df = pd.DataFrame(plot_data)
             min_start_time = plot_df['Start Time'].min().replace(hour=9, minute=0, second=0)
-            print(min_start_time)
-            # Define specific colors for each component and setup time
+
+            # Define specific colors for each component and setup time, including delay
             color_discrete_map = {
-                "C1": 'skyblue', 
-                "C2": 'yellow', 
-                "C3": 'salmon', 
-                "C4": 'gold', 
+                "C1": 'skyblue',
+                "C2": 'yellow',
+                "C3": 'salmon',
+                "C4": 'gold',
                 "C5": 'orchid',
-                "Setup Time": 'black'  # General color for setup times
+                "Setup Time": 'black',  # General color for setup times
+                "Total Delay": 'red'  # Color for total delay blocks
             }
 
             # Create the Gantt chart
             fig = px.timeline(
-                plot_df, 
-                x_start='Start Time', 
-                x_end='End Time', 
-                y='Product Name', 
+                plot_df,
+                x_start='Start Time',
+                x_end='End Time',
+                y='Product Name',
                 color='Components',
-                title='Real-Time 2D Gantt Chart', 
+                title='Real-Time 2D Gantt Chart',
                 labels={'Components': 'Component'},
                 hover_data={
-                    'Machine Number': True, 
-                    'Formatted Start Time': True, 
-                    'Formatted End Time': True,
+                    'Machine Number': True,
                     'Start Time': False,  # Hide the original 'Start Time'
                     'End Time': False     # Hide the original 'End Time'
-                }, 
+                },
                 color_discrete_map=color_discrete_map
             )
 
-            # Update layout to include both date and time on x-axis
+            # Update layout to include both date and time on the x-axis
             fig.update_layout(
                 xaxis_title="Time",
                 yaxis_title="Products",
@@ -2048,30 +2044,32 @@ def launch_dashboard():
                     tickmode='linear',
                     tick0=min_start_time,  # Start tick from the minimum Start Time
                     dtick=45000000  # 5 hours in milliseconds (5 hours * 60 minutes * 60 seconds * 1000 milliseconds)
-                    
                 ),
                 height=1000,  # Adjust height for better readability
                 width=1800,  # Adjust width for better readability
             )
 
-            # Add machine IDs as text inside the rectangles
-            for index, row in df.iterrows():
+            # Add machine IDs as text inside the rectangles, excluding setup time and total delay
+            for index, row in plot_df.iterrows():
                 if pd.notnull(row['Start Time']) and pd.notnull(row['End Time']):
-                    
                     start_time = pd.to_datetime(row['Start Time'])
                     end_time = pd.to_datetime(row['End Time'])
                     duration = (end_time - start_time) / 2
                     mid_time = start_time + duration
-                    fig.add_annotation(
-                        x=mid_time.strftime("%Y-%m-%d %H:%M:%S"),
-                        y=row['Product Name'],
-                        text=f"{row['Machine Number']}<br>{row['Components']}",
-                        showarrow=False,
-                        font=dict(color='black', size=9),
-                        align='center',
-                        xanchor='center',
-                        yanchor='middle'
-                    )
+                    
+                    # Only add text for non-setup and non-delay components
+                    if not row['Is Setup'] and row['Components'] != 'Total Delay':
+                        annotation_text = f"{row['Machine Number']}<br>{row['Components']}"
+                        fig.add_annotation(
+                            x=mid_time.strftime("%Y-%m-%d %H:%M:%S"),
+                            y=row['Product Name'],
+                            text=annotation_text,
+                            showarrow=False,
+                            font=dict(color='black', size=9),
+                            align='center',
+                            xanchor='center',
+                            yanchor='middle'
+                        )
 
                 
         elif selected_plot == "Utilization":
